@@ -7,6 +7,9 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <functional>
+#include <string>
+#include <vector>
 
 namespace stella_vslam {
 
@@ -40,10 +43,12 @@ public:
     /**
      * Constructor
      * @param yaml_node
+         * @param root_yaml_node
      * @param frame_publisher
      * @param map_publisher
      */
     viewer(const YAML::Node& yaml_node,
+             const YAML::Node& root_yaml_node,
            const std::shared_ptr<stella_vslam::publish::frame_publisher>& frame_publisher,
            const std::shared_ptr<stella_vslam::publish::map_publisher>& map_publisher);
 
@@ -71,6 +76,31 @@ public:
     }
 
 private:
+    struct loop_detector_config {
+        bool enabled = true;
+        bool reject_by_graph_distance = false;
+        unsigned int min_distance_on_graph = 50;
+        unsigned int top_n_covisibilities_to_search = 0;
+        unsigned int num_matches_thr_robust_matcher = 0;
+        unsigned int num_final_matches_threshold = 40;
+        unsigned int num_matches_thr = 20;
+        unsigned int num_optimized_inliers_thr = 20;
+        float num_common_words_thr_ratio = 0.8f;
+        unsigned int min_continuity = 3;
+    };
+
+    struct loop_debug_candidate_summary {
+        unsigned int keyframe_id = 0;
+        unsigned int num_common_words = 0;
+        float distance_m = 0.0f;
+        unsigned int shared_landmarks = 0;
+        int graph_distance = -1;
+        bool connected = false;
+        bool rejected_by_search = false;
+        bool passes_common_words_gate = false;
+        bool has_loop_edge = false;
+    };
+
     void ui_callback(guik::LightViewer* viewer);
 
     void draw_rect(cv::Mat& img, const cv::KeyPoint& keypoint, const cv::Scalar& color);
@@ -78,7 +108,10 @@ private:
         cv::Mat& img,
         const std::vector<cv::KeyPoint>& keypoints,
         const std::vector<std::shared_ptr<stella_vslam::data::landmark>>& landmarks,
-        const bool mapping_is_enabled);
+        const std::vector<unsigned int>& keypoint_indices,
+        const bool mapping_is_enabled,
+        unsigned int image_idx,
+        bool& selected_keypoint_found);
     void draw_covisibility_graph(
         guik::LightViewer* viewer,
         std::vector<std::shared_ptr<stella_vslam::data::keyframe>>& keyfrms);
@@ -111,20 +144,31 @@ private:
     int min_shared_lms_ = 100;
     bool show_spanning_tree_ = false;
     bool show_loop_edge_ = false;
+    bool show_potential_loop_candidates_ = true;
     bool follow_camera_ = true;
     bool filter_by_octave_ = false;
     int octave_ = 0;
     bool point_splatting_ = true;
     float point_radius_ = 0.01;
+    bool color_by_semantics_ = false;
     float current_frame_scale_ = 0.05f;
     float keyframe_scale_ = 0.05f;
     float selected_landmark_scale_ = 0.01f;
-    std::shared_ptr<glk::Texture> texture_ = nullptr;
+    std::vector<std::shared_ptr<glk::Texture>> textures_;
     bool clicked_ = false;
     Eigen::Vector2d clicked_pt_;
+    std::optional<unsigned int> clicked_image_idx_;
     std::optional<Eigen::Vector3f> clicked_point3d_;
     std::string keypoint_info_;
     std::string landmark_info_;
+    loop_detector_config loop_detector_config_;
+    int loop_debug_source_keyframe_id_ = -1;
+    float loop_debug_current_to_source_distance_m_ = -1.0f;
+    int loop_debug_rejected_candidates_ = 0;
+    unsigned int loop_debug_max_common_words_ = 0;
+    unsigned int loop_debug_min_common_words_threshold_ = 0;
+    int loop_debug_candidates_passing_common_words_gate_ = 0;
+    std::vector<loop_debug_candidate_summary> loop_debug_candidates_;
 
     Eigen::Matrix3d rot_ros_to_cv_map_frame_;
 
