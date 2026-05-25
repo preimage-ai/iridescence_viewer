@@ -657,12 +657,12 @@ void viewer::run() {
         std::vector<cv::Mat> images;
         std::vector<cv::KeyPoint> keypoints;
         std::vector<std::shared_ptr<stella_vslam::data::landmark>> frame_landmarks;
-        std::vector<unsigned int> camera_indices;
+        std::vector<unsigned int> camera_indices; // empty → all keypoints map to image 0
         bool mapping_is_enabled = false;
-        frame_publisher_->get_frame_snapshot(images, keypoints, frame_landmarks, camera_indices, mapping_is_enabled);
-        if (images.empty()) {
-            images.push_back(frame_publisher_->get_image());
-        }
+        images.push_back(frame_publisher_->get_image());
+        keypoints = frame_publisher_->get_keypoints();
+        frame_landmarks = frame_publisher_->get_landmarks();
+        mapping_is_enabled = frame_publisher_->get_mapping_is_enabled();
 
         const std::size_t num_images = std::max<std::size_t>(images.size(), 1);
         std::vector<std::vector<unsigned int>> keypoint_indices_by_image(num_images);
