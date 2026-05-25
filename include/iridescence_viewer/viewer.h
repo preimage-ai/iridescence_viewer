@@ -14,6 +14,7 @@
 namespace stella_vslam {
 
 class config;
+class Floorplan;
 namespace data {
 class keyframe;
 class landmark;
@@ -74,6 +75,8 @@ public:
     void add_close_callback(std::function<void()> callback) {
         close_callback_ = callback;
     }
+
+    void set_floorplan(std::shared_ptr<stella_vslam::Floorplan> floorplan);
 
 private:
     struct loop_detector_config {
@@ -171,6 +174,17 @@ private:
     std::vector<loop_debug_candidate_summary> loop_debug_candidates_;
 
     Eigen::Matrix3d rot_ros_to_cv_map_frame_;
+
+    // floorplan mini-map
+    std::shared_ptr<stella_vslam::Floorplan> floorplan_;
+    stella_vslam::Mat44_t floorplan_T_F_Ws_ = stella_vslam::Mat44_t::Identity();
+    int fp_disp_w_ = 0;
+    int fp_disp_h_ = 0;
+    int fp_init_px_ = 0;
+    int fp_init_py_ = 0;
+    double fp_disp_scale_ = 1.0;
+    bool show_floorplan_ = true;
+    std::shared_ptr<glk::Texture> floorplan_texture_;
 
     //-----------------------------------------
     // management for terminate process
