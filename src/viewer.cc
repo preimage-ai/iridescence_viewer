@@ -6,6 +6,7 @@
 #include "stella_vslam/publish/frame_publisher.h"
 #include "stella_vslam/publish/map_publisher.h"
 #include "stella_vslam/util/yaml.h"
+#include "stella_vslam/floorplan/floorplan.h"
 
 #include <glk/primitives/primitives.hpp>
 #include <glk/pointcloud_buffer.hpp>
@@ -292,6 +293,13 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
         ImGui::End();
     }
 
+    if (floorplan_ && show_floorplan_ && floorplan_texture_) {
+        ImGui::Begin("Floorplan", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        const Eigen::Vector2i size = floorplan_texture_->size();
+        ImGui::Image(reinterpret_cast<void*>(floorplan_texture_->id()), ImVec2(size[0], size[1]));
+        ImGui::End();
+    }
+
     ImGui::Begin("ui", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::Checkbox("Select keypoint by ID", &select_keypoint_by_id_);
     if (select_keypoint_by_id_) {
@@ -360,6 +368,9 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
         ImGui::DragFloat("Point radius", &point_radius_, 0.001f, 0.001f, 1.0f);
     }
     ImGui::Checkbox("Color by semantics", &color_by_semantics_);
+    if (floorplan_) {
+        ImGui::Checkbox("Show Floorplan", &show_floorplan_);
+    }
     for (auto&& pair : checkbox_callback_map_) {
         if (ImGui::Checkbox(pair.first.c_str(), &is_paused_)) {
             if (pair.second) {
@@ -375,6 +386,26 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
         }
     }
     ImGui::End();
+}
+
+void viewer::set_floorplan(std::shared_ptr<stella_vslam::Floorplan> floorplan) {
+    if (!floorplan || !floorplan->is_loaded()) {
+        return;
+    }
+    floorplan_ = floorplan;
+
+    stella_vslam::Floorplan::Pose2_5D p0;
+    p0.x_m     = floorplan->first_cam_px * floorplan->mpp;
+    p0.y_m     = floorplan->first_cam_py * floorplan->mpp;
+    p0.z_m     = 1.5;
+    p0.yaw_rad = 0.0;
+    floorplan_T_F_Ws_ = floorplan->pose2d5_to_se3(p0);
+
+    fp_disp_scale_ = 800.0 / static_cast<double>(std::max(floorplan->image.cols, floorplan->image.rows));
+    fp_disp_w_     = static_cast<int>(floorplan->image.cols * fp_disp_scale_);
+    fp_disp_h_     = static_cast<int>(floorplan->image.rows * fp_disp_scale_);
+    fp_init_px_    = static_cast<int>(floorplan->first_cam_px * fp_disp_scale_);
+    fp_init_py_    = static_cast<int>(floorplan->first_cam_py * fp_disp_scale_);
 }
 
 void viewer::run() {
@@ -680,6 +711,45 @@ void viewer::run() {
                 viewer->update_drawable("selected point", glk::Primitives::sphere(), guik::FlatColor(Eigen::Vector4f(1.0f, 0.0f, 0.0f, 1.0f)).translate(pos_w).scale(selected_landmark_scale_));
                 landmark_info_ = "num_observed: " + std::to_string(lm->get_num_observed()) + "\nobserved_ratio: " + std::to_string(lm->get_observed_ratio());
             }
+        }
+
+        // Update floorplan mini-map texture
+        if (floorplan_ && show_floorplan_) {
+            cv::Mat disp;
+            cv::resize(floorplan_->image, disp, cv::Size(fp_disp_w_, fp_disp_h_));
+
+            // Mark first-camera position (red dot, BGR)
+            cv::circle(disp, cv::Point(fp_init_px_, fp_init_py_), 7, cv::Scalar(0, 0, 255), -1);
+
+            // Draw keyframe path in chronological order (green dots + lines, BGR)
+            std::vector<std::shared_ptr<stella_vslam::data::keyframe>> sorted_kfs = keyfrms;
+            std::sort(sorted_kfs.begin(), sorted_kfs.end(),
+                      [](const auto& a, const auto& b) { return a->id_ < b->id_; });
+
+            cv::Point prev_pt;
+            bool has_prev = false;
+            for (const auto& kf : sorted_kfs) {
+                if (!kf || kf->will_be_erased()) {
+                    continue;
+                }
+                const stella_vslam::Mat44_t T_F_Ck = floorplan_T_F_Ws_ * kf->get_pose_wc();
+                const auto p25   = floorplan_->se3_to_pose2d5(T_F_Ck);
+                const auto fp_px = floorplan_->to_pixel(p25.x_m, p25.y_m);
+                const cv::Point pt(static_cast<int>(fp_px.x * fp_disp_scale_),
+                                   static_cast<int>(fp_px.y * fp_disp_scale_));
+                if (pt.x < 0 || pt.x >= fp_disp_w_ || pt.y < 0 || pt.y >= fp_disp_h_) {
+                    has_prev = false;
+                    continue;
+                }
+                if (has_prev) {
+                    cv::line(disp, prev_pt, pt, cv::Scalar(0, 200, 0), 1, cv::LINE_AA);
+                }
+                cv::circle(disp, pt, 3, cv::Scalar(0, 255, 0), -1);
+                prev_pt  = pt;
+                has_prev = true;
+            }
+
+            floorplan_texture_ = glk::create_texture(disp);
         }
 
         if (terminate_is_requested()) {
