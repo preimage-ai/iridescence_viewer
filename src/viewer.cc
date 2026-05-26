@@ -609,7 +609,7 @@ void viewer::run() {
                 }
             }
             points.push_back(pos_w.cast<float>());
-            semantics_colors.push_back(Eigen::Vector4f(0.0f, 1.0f, 0.0f, 1.0f));
+            semantics_colors.push_back(label_to_color(lm->semantic_label_));
             if (point_splatting_) {
                 normals.push_back((rot_ros_to_cv_map_frame_ * lm->get_obs_mean_normal()).cast<float>());
             }
