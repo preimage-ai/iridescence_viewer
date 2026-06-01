@@ -78,6 +78,15 @@ public:
 
     void set_floorplan(std::shared_ptr<stella_vslam::Floorplan> floorplan);
 
+    void add_autopause_callback(std::function<void()> cb) {
+        autopause_cb_ = std::move(cb);
+    }
+
+    void add_floorplan_anchor_callback(
+        std::function<void(unsigned int, const stella_vslam::Mat44_t&)> cb) {
+        anchor_cb_ = std::move(cb);
+    }
+
 private:
     struct loop_detector_config {
         bool enabled = true;
@@ -185,6 +194,13 @@ private:
     double fp_disp_scale_ = 1.0;
     bool show_floorplan_ = true;
     std::shared_ptr<glk::Texture> floorplan_texture_;
+
+    // floorplan anchor placement
+    int  autopause_at_kf_ = 0;
+    bool autopause_fired_  = false;
+    std::function<void()> autopause_cb_;
+    std::function<void(unsigned int, const stella_vslam::Mat44_t&)> anchor_cb_;
+    cv::Point anchor_marker_pt_{-1, -1};
 
     //-----------------------------------------
     // management for terminate process

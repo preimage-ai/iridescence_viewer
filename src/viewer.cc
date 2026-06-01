@@ -295,8 +295,49 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
 
     if (floorplan_ && show_floorplan_ && floorplan_texture_) {
         ImGui::Begin("Floorplan", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::InputInt("Auto-pause at KF #", &autopause_at_kf_);
         const Eigen::Vector2i size = floorplan_texture_->size();
+        ImVec2 fp_screen_pos = ImGui::GetCursorScreenPos();
         ImGui::Image(reinterpret_cast<void*>(floorplan_texture_->id()), ImVec2(size[0], size[1]));
+        ImVec2 mouse_pos = ImGui::GetIO().MousePos;
+        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0) && anchor_cb_) {
+            const double col_fp = (mouse_pos.x - fp_screen_pos.x) / fp_disp_scale_;
+            const double row_fp = (mouse_pos.y - fp_screen_pos.y) / fp_disp_scale_;
+            const double x_fp_m = col_fp * floorplan_->mpp;
+            const double y_fp_m = row_fp * floorplan_->mpp;
+
+            std::vector<std::shared_ptr<stella_vslam::data::keyframe>> click_kfs;
+            map_publisher_->get_keyframes(click_kfs);
+            if (!click_kfs.empty()) {
+                const auto& latest_kf = *std::max_element(click_kfs.begin(), click_kfs.end(),
+                    [](const auto& a, const auto& b) { return a->id_ < b->id_; });
+
+                // Preserve SLAM-estimated yaw/z; override only XY
+                const stella_vslam::Mat44_t T_F_Ck = floorplan_T_F_Ws_ * latest_kf->get_pose_wc();
+                auto p25 = floorplan_->se3_to_pose2d5(T_F_Ck);
+                p25.x_m = x_fp_m;
+                p25.y_m = y_fp_m;
+                const stella_vslam::Mat44_t T_F_Ck_target = floorplan_->pose2d5_to_se3(p25);
+
+                // SE3 inverse of T_F_Ws (analytic)
+                stella_vslam::Mat44_t T_Ws_F = stella_vslam::Mat44_t::Identity();
+                const auto R_F_Ws = floorplan_T_F_Ws_.block<3, 3>(0, 0);
+                T_Ws_F.block<3, 3>(0, 0) = R_F_Ws.transpose();
+                T_Ws_F.block<3, 1>(0, 3) = -R_F_Ws.transpose() * floorplan_T_F_Ws_.block<3, 1>(0, 3);
+
+                const stella_vslam::Mat44_t new_pose_wc = T_Ws_F * T_F_Ck_target;
+
+                // pose_cw = SE3 inverse of pose_wc
+                stella_vslam::Mat44_t new_pose_cw = stella_vslam::Mat44_t::Identity();
+                const auto R_wc = new_pose_wc.block<3, 3>(0, 0);
+                new_pose_cw.block<3, 3>(0, 0) = R_wc.transpose();
+                new_pose_cw.block<3, 1>(0, 3) = -R_wc.transpose() * new_pose_wc.block<3, 1>(0, 3);
+
+                anchor_cb_(latest_kf->id_, new_pose_cw);
+                anchor_marker_pt_ = cv::Point(static_cast<int>(col_fp * fp_disp_scale_),
+                                              static_cast<int>(row_fp * fp_disp_scale_));
+            }
+        }
         ImGui::End();
     }
 
@@ -398,7 +439,7 @@ void viewer::set_floorplan(std::shared_ptr<stella_vslam::Floorplan> floorplan) {
     p0.x_m     = floorplan->first_cam_px * floorplan->mpp;
     p0.y_m     = floorplan->first_cam_py * floorplan->mpp;
     p0.z_m     = 1.5;
-    p0.yaw_rad = 0.0;
+    p0.yaw_rad = floorplan->first_cam_yaw_deg * M_PI / 180.0;
     floorplan_T_F_Ws_ = floorplan->pose2d5_to_se3(p0);
 
     fp_disp_scale_ = 800.0 / static_cast<double>(std::max(floorplan->image.cols, floorplan->image.rows));
@@ -747,6 +788,19 @@ void viewer::run() {
                 cv::circle(disp, pt, 3, cv::Scalar(0, 255, 0), -1);
                 prev_pt  = pt;
                 has_prev = true;
+            }
+
+            // Auto-pause trigger
+            if (autopause_at_kf_ > 0 && static_cast<int>(sorted_kfs.size()) >= autopause_at_kf_
+                    && !autopause_fired_) {
+                autopause_fired_ = true;
+                if (autopause_cb_) autopause_cb_();
+            }
+
+            // Orange ring at last placed anchor
+            if (anchor_marker_pt_.x >= 0 && anchor_marker_pt_.x < fp_disp_w_
+                    && anchor_marker_pt_.y >= 0 && anchor_marker_pt_.y < fp_disp_h_) {
+                cv::circle(disp, anchor_marker_pt_, 8, cv::Scalar(0, 128, 255), 2);
             }
 
             floorplan_texture_ = glk::create_texture(disp);
