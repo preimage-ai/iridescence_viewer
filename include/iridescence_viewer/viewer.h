@@ -82,6 +82,7 @@ public:
     //! Sets T_F_Ws = Identity so display and click handler work in floorplan = stella world frame.
     void set_floorplan_aligned() {
         floorplan_T_F_Ws_ = stella_vslam::Mat44_t::Identity();
+        floorplan_aligned_ = true;
     }
 
     void add_autopause_callback(std::function<void()> cb) {
@@ -202,8 +203,9 @@ private:
     std::shared_ptr<glk::Texture> floorplan_texture_;
 
     // floorplan anchor placement
-    int  autopause_at_kf_ = 0;
+    int  autopause_at_kf_ = 50;
     bool autopause_fired_  = false;
+    bool floorplan_aligned_ = false;  // set true once rigid alignment has fired
     std::function<void()> autopause_cb_;
     std::function<void(unsigned int, const stella_vslam::Mat44_t&)> anchor_cb_;
     cv::Point anchor_marker_pt_{-1, -1};

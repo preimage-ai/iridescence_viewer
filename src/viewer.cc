@@ -302,7 +302,7 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
         ImVec2 fp_screen_pos = ImGui::GetCursorScreenPos();
         ImGui::Image(reinterpret_cast<void*>(floorplan_texture_->id()), ImVec2(size[0], size[1]));
         ImVec2 mouse_pos = ImGui::GetIO().MousePos;
-        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0) && anchor_cb_) {
+        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0) && anchor_cb_ && floorplan_aligned_) {
             // Pixel click → floorplan metric = slam world coordinates (same frame after alignment)
             const double x_m = (mouse_pos.x - fp_screen_pos.x) / fp_disp_scale_ * floorplan_->mpp;
             const double y_m = (mouse_pos.y - fp_screen_pos.y) / fp_disp_scale_ * floorplan_->mpp;
@@ -790,8 +790,9 @@ void viewer::run() {
                 has_prev = true;
             }
 
-            // Auto-pause trigger
-            if (autopause_at_kf_ > 0 && static_cast<int>(sorted_kfs.size()) >= autopause_at_kf_
+            // Auto-pause trigger — only after floorplan alignment has fired
+            if (floorplan_aligned_ && autopause_at_kf_ > 0
+                    && static_cast<int>(sorted_kfs.size()) >= autopause_at_kf_
                     && !autopause_fired_) {
                 autopause_fired_ = true;
                 if (autopause_cb_) autopause_cb_();
