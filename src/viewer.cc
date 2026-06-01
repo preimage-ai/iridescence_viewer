@@ -297,7 +297,7 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
 
     if (floorplan_ && show_floorplan_ && floorplan_texture_) {
         ImGui::Begin("Floorplan", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::InputInt("Auto-pause at KF #", &autopause_at_kf_);
+        ImGui::InputInt("Anchor every N KFs", &anchor_interval_kf_);
         const Eigen::Vector2i size = floorplan_texture_->size();
         ImVec2 fp_screen_pos = ImGui::GetCursorScreenPos();
         ImGui::Image(reinterpret_cast<void*>(floorplan_texture_->id()), ImVec2(size[0], size[1]));
@@ -790,12 +790,13 @@ void viewer::run() {
                 has_prev = true;
             }
 
-            // Auto-pause trigger — only after floorplan alignment has fired
-            if (floorplan_aligned_ && autopause_at_kf_ > 0
-                    && static_cast<int>(sorted_kfs.size()) >= autopause_at_kf_
-                    && !autopause_fired_) {
-                autopause_fired_ = true;
-                if (autopause_cb_) autopause_cb_();
+            // Auto-pause every N KFs after floorplan alignment has fired
+            if (floorplan_aligned_ && anchor_interval_kf_ > 0) {
+                const int cur_kf = static_cast<int>(sorted_kfs.size());
+                if (last_autopause_kf_ < 0 || cur_kf >= last_autopause_kf_ + anchor_interval_kf_) {
+                    last_autopause_kf_ = cur_kf;
+                    if (autopause_cb_) autopause_cb_();
+                }
             }
 
             // Orange ring at last placed anchor

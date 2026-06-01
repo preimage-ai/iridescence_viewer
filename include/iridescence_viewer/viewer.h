@@ -203,9 +203,9 @@ private:
     std::shared_ptr<glk::Texture> floorplan_texture_;
 
     // floorplan anchor placement
-    int  autopause_at_kf_ = 50;
-    bool autopause_fired_  = false;
-    bool floorplan_aligned_ = false;  // set true once rigid alignment has fired
+    int  anchor_interval_kf_ = 10;   // pause every N KFs after alignment (0 = disabled)
+    int  last_autopause_kf_  = -1;   // KF count when last auto-pause fired (-1 = never)
+    bool floorplan_aligned_  = false; // set true once rigid alignment has fired
     std::function<void()> autopause_cb_;
     std::function<void(unsigned int, const stella_vslam::Mat44_t&)> anchor_cb_;
     cv::Point anchor_marker_pt_{-1, -1};
