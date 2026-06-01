@@ -449,6 +449,7 @@ void viewer::set_floorplan(std::shared_ptr<stella_vslam::Floorplan> floorplan) {
 }
 
 void viewer::run() {
+    spdlog::info("=== BUILD CHECK: iridescence_viewer 2026-06-01-A ===");
     auto viewer = guik::LightViewer::instance(Eigen::Vector2i(-1, -1), false, "iridescence_viewer");
 
     viewer->register_ui_callback("ui", [this, &viewer] { ui_callback(viewer); });
