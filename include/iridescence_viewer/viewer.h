@@ -78,6 +78,12 @@ public:
 
     void set_floorplan(std::shared_ptr<stella_vslam::Floorplan> floorplan);
 
+    //! Call once the mapping module has applied the floorplan rigid alignment.
+    //! Sets T_F_Ws = Identity so display and click handler work in floorplan = stella world frame.
+    void set_floorplan_aligned() {
+        floorplan_T_F_Ws_ = stella_vslam::Mat44_t::Identity();
+    }
+
     void add_autopause_callback(std::function<void()> cb) {
         autopause_cb_ = std::move(cb);
     }

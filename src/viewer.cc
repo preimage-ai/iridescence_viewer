@@ -21,6 +21,8 @@
 #include <thread>
 #include <unordered_map>
 
+#include <spdlog/spdlog.h>
+
 namespace {
 Eigen::Matrix4d rotate_pose(Eigen::Matrix4d pose_cw, Eigen::Matrix3d rot) {
     return (rot * Eigen::Affine3d(Eigen::Translation3d(pose_cw.block<3, 1>(0, 3)) * pose_cw.block<3, 3>(0, 0))).matrix();
@@ -301,10 +303,9 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
         ImGui::Image(reinterpret_cast<void*>(floorplan_texture_->id()), ImVec2(size[0], size[1]));
         ImVec2 mouse_pos = ImGui::GetIO().MousePos;
         if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0) && anchor_cb_) {
-            const double col_fp = (mouse_pos.x - fp_screen_pos.x) / fp_disp_scale_;
-            const double row_fp = (mouse_pos.y - fp_screen_pos.y) / fp_disp_scale_;
-            const double x_fp_m = col_fp * floorplan_->mpp;
-            const double y_fp_m = row_fp * floorplan_->mpp;
+            // Pixel click → floorplan metric = slam world coordinates (same frame after alignment)
+            const double x_m = (mouse_pos.x - fp_screen_pos.x) / fp_disp_scale_ * floorplan_->mpp;
+            const double y_m = (mouse_pos.y - fp_screen_pos.y) / fp_disp_scale_ * floorplan_->mpp;
 
             std::vector<std::shared_ptr<stella_vslam::data::keyframe>> click_kfs;
             map_publisher_->get_keyframes(click_kfs);
@@ -312,30 +313,28 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
                 const auto& latest_kf = *std::max_element(click_kfs.begin(), click_kfs.end(),
                     [](const auto& a, const auto& b) { return a->id_ < b->id_; });
 
-                // Preserve SLAM-estimated yaw/z; override only XY
-                const stella_vslam::Mat44_t T_F_Ck = floorplan_T_F_Ws_ * latest_kf->get_pose_wc();
-                auto p25 = floorplan_->se3_to_pose2d5(T_F_Ck);
-                p25.x_m = x_fp_m;
-                p25.y_m = y_fp_m;
-                const stella_vslam::Mat44_t T_F_Ck_target = floorplan_->pose2d5_to_se3(p25);
+                // Preserve slam-estimated yaw, z, pitch, roll — place XY at clicked position
+                auto p25 = floorplan_->se3_to_pose2d5(latest_kf->get_pose_wc());
+                p25.x_m = x_m;
+                p25.y_m = y_m;
+                const stella_vslam::Mat44_t new_pose_wc = floorplan_->pose2d5_to_se3(p25);
 
-                // SE3 inverse of T_F_Ws (analytic)
-                stella_vslam::Mat44_t T_Ws_F = stella_vslam::Mat44_t::Identity();
-                const auto R_F_Ws = floorplan_T_F_Ws_.block<3, 3>(0, 0);
-                T_Ws_F.block<3, 3>(0, 0) = R_F_Ws.transpose();
-                T_Ws_F.block<3, 1>(0, 3) = -R_F_Ws.transpose() * floorplan_T_F_Ws_.block<3, 1>(0, 3);
-
-                const stella_vslam::Mat44_t new_pose_wc = T_Ws_F * T_F_Ck_target;
-
-                // pose_cw = SE3 inverse of pose_wc
+                // Build pose_cw from pose_wc (SE3 inversion: R^T, -R^T*t)
+                const auto R = new_pose_wc.block<3, 3>(0, 0);
                 stella_vslam::Mat44_t new_pose_cw = stella_vslam::Mat44_t::Identity();
-                const auto R_wc = new_pose_wc.block<3, 3>(0, 0);
-                new_pose_cw.block<3, 3>(0, 0) = R_wc.transpose();
-                new_pose_cw.block<3, 1>(0, 3) = -R_wc.transpose() * new_pose_wc.block<3, 1>(0, 3);
+                new_pose_cw.block<3, 3>(0, 0) = R.transpose();
+                new_pose_cw.block<3, 1>(0, 3) = -R.transpose() * new_pose_wc.block<3, 1>(0, 3);
 
+                spdlog::info("viewer: anchor click — KF {} at ({:.2f}, {:.2f}) m  "
+                             "slam-yaw={:.1f}deg  (display px {}, {})",
+                             latest_kf->id_, x_m, y_m,
+                             p25.yaw_rad * 180.0 / M_PI,
+                             static_cast<int>(mouse_pos.x - fp_screen_pos.x),
+                             static_cast<int>(mouse_pos.y - fp_screen_pos.y));
                 anchor_cb_(latest_kf->id_, new_pose_cw);
-                anchor_marker_pt_ = cv::Point(static_cast<int>(col_fp * fp_disp_scale_),
-                                              static_cast<int>(row_fp * fp_disp_scale_));
+                anchor_marker_pt_ = cv::Point(
+                    static_cast<int>(mouse_pos.x - fp_screen_pos.x),
+                    static_cast<int>(mouse_pos.y - fp_screen_pos.y));
             }
         }
         ImGui::End();
