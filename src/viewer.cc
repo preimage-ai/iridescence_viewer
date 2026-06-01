@@ -790,10 +790,15 @@ void viewer::run() {
                 has_prev = true;
             }
 
-            // Auto-pause every N KFs after floorplan alignment has fired
+            // Auto-pause every N KFs after floorplan alignment has fired.
+            // On first alignment tick: record current KF as baseline without pausing.
+            // Subsequent ticks: pause once N more KFs have accumulated.
             if (floorplan_aligned_ && anchor_interval_kf_ > 0) {
                 const int cur_kf = static_cast<int>(sorted_kfs.size());
-                if (last_autopause_kf_ < 0 || cur_kf >= last_autopause_kf_ + anchor_interval_kf_) {
+                if (last_autopause_kf_ < 0) {
+                    last_autopause_kf_ = cur_kf;  // baseline — no pause yet
+                }
+                else if (cur_kf >= last_autopause_kf_ + anchor_interval_kf_) {
                     last_autopause_kf_ = cur_kf;
                     if (autopause_cb_) autopause_cb_();
                 }

@@ -203,7 +203,7 @@ private:
     std::shared_ptr<glk::Texture> floorplan_texture_;
 
     // floorplan anchor placement
-    int  anchor_interval_kf_ = 10;   // pause every N KFs after alignment (0 = disabled)
+    int  anchor_interval_kf_ = 0;    // pause every N KFs after alignment (0 = disabled)
     int  last_autopause_kf_  = -1;   // KF count when last auto-pause fired (-1 = never)
     bool floorplan_aligned_  = false; // set true once rigid alignment has fired
     std::function<void()> autopause_cb_;
