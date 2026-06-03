@@ -575,9 +575,25 @@ void viewer::run() {
             }
         }
 
-        viewer->update_drawable("current_frame", glk::Primitives::wire_frustum(), guik::FlatColor(Eigen::Vector4f(0.7f, 0.7f, 1.0f, 1.0f), current_frame_pose).scale(current_frame_scale_));
+        // current_frame: blue when tracking, red when Lost (pose is stale/SW-frame after alignment)
+        const bool tracking_is_lost = (frame_publisher_->get_tracking_state() == "Lost");
+        const Eigen::Vector4f current_frame_color = tracking_is_lost
+            ? Eigen::Vector4f(1.0f, 0.2f, 0.2f, 1.0f)   // red  — stale, Lost state
+            : Eigen::Vector4f(0.7f, 0.7f, 1.0f, 1.0f);  // blue — actively tracked
+        viewer->update_drawable("current_frame", glk::Primitives::wire_frustum(), guik::FlatColor(current_frame_color, current_frame_pose).scale(current_frame_scale_));
         if (follow_camera_) {
             viewer->lookat(current_frame_pose.block<3, 1>(0, 3).cast<float>());
+        }
+
+        // Find the latest keyframe (highest id) to highlight in white
+        std::shared_ptr<stella_vslam::data::keyframe> latest_keyfrm;
+        for (const auto& keyfrm : keyfrms) {
+            if (!keyfrm || keyfrm->will_be_erased()) {
+                continue;
+            }
+            if (!latest_keyfrm || keyfrm->id_ > latest_keyfrm->id_) {
+                latest_keyfrm = keyfrm;
+            }
         }
 
         for (const auto& keyfrm : keyfrms) {
@@ -587,10 +603,13 @@ void viewer::run() {
             Eigen::Matrix4d keyfrms_pose = rotate_pose(keyfrm->get_pose_wc(), rot_ros_to_cv_map_frame_);
             const auto name = std::string("keyfrms_pose_") + std::to_string(keyfrm->id_);
             const bool is_loop_source = show_potential_loop_candidates_ && loop_source_keyfrm && keyfrm->id_ == loop_source_keyfrm->id_;
+            const bool is_latest = (latest_keyfrm && keyfrm->id_ == latest_keyfrm->id_);
             const Eigen::Vector4f color = is_loop_source
-                                              ? Eigen::Vector4f(0.0f, 1.0f, 1.0f, 1.0f)
-                                              : Eigen::Vector4f(0.0f, 1.0f, 0.0f, 1.0f);
-            const float scale = is_loop_source ? keyframe_scale_ * 1.2f : keyframe_scale_;
+                                              ? Eigen::Vector4f(0.0f, 1.0f, 1.0f, 1.0f)   // cyan
+                                              : is_latest
+                                                  ? Eigen::Vector4f(1.0f, 0.0f, 1.0f, 1.0f) // magenta — latest KF
+                                                  : Eigen::Vector4f(0.0f, 1.0f, 0.0f, 1.0f); // green
+            const float scale = (is_loop_source || is_latest) ? keyframe_scale_ * 1.4f : keyframe_scale_;
             viewer->update_drawable(name, glk::Primitives::wire_frustum(), guik::FlatColor(color, keyfrms_pose).scale(scale));
         }
 
