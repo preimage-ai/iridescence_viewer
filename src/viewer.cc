@@ -332,11 +332,20 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
                              static_cast<int>(mouse_pos.x - fp_screen_pos.x),
                              static_cast<int>(mouse_pos.y - fp_screen_pos.y));
                 anchor_cb_(latest_kf->id_, new_pose_cw);
+                anchor_kf_preview_texture_.reset();
                 anchor_marker_pt_ = cv::Point(
                     static_cast<int>(mouse_pos.x - fp_screen_pos.x),
                     static_cast<int>(mouse_pos.y - fp_screen_pos.y));
             }
         }
+        ImGui::End();
+    }
+
+    if (anchor_kf_preview_texture_) {
+        const std::string win_title = "Anchor KF " + std::to_string(anchor_preview_kf_id_);
+        ImGui::Begin(win_title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        const Eigen::Vector2i sz = anchor_kf_preview_texture_->size();
+        ImGui::Image(reinterpret_cast<void*>(anchor_kf_preview_texture_->id()), ImVec2(sz[0], sz[1]));
         ImGui::End();
     }
 
@@ -819,6 +828,22 @@ void viewer::run() {
                 }
                 else if (cur_kf >= last_autopause_kf_ + anchor_interval_kf_) {
                     last_autopause_kf_ = cur_kf;
+                    // Snapshot the triggering KF's image for the anchor preview window
+                    if (!sorted_kfs.empty() && sorted_kfs.back()) {
+                        const auto& trigger_kf = sorted_kfs.back();
+                        anchor_preview_kf_id_ = trigger_kf->id_;
+                        const cv::Mat kf_img = map_publisher_->get_keyframe_image(trigger_kf->id_);
+                        if (!kf_img.empty()) {
+                            cv::Mat preview;
+                            constexpr int preview_w = 480;
+                            const double scale = static_cast<double>(preview_w) / kf_img.cols;
+                            cv::resize(kf_img, preview, cv::Size(), scale, scale);
+                            if (preview.channels() == 1) {
+                                cv::cvtColor(preview, preview, cv::COLOR_GRAY2BGR);
+                            }
+                            anchor_kf_preview_texture_ = glk::create_texture(preview);
+                        }
+                    }
                     if (autopause_cb_) autopause_cb_();
                 }
             }

@@ -209,6 +209,8 @@ private:
     std::function<void()> autopause_cb_;
     std::function<void(unsigned int, const stella_vslam::Mat44_t&)> anchor_cb_;
     cv::Point anchor_marker_pt_{-1, -1};
+    unsigned int anchor_preview_kf_id_ = 0;
+    std::shared_ptr<glk::Texture> anchor_kf_preview_texture_;
 
     //-----------------------------------------
     // management for terminate process
