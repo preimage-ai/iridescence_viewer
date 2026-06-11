@@ -376,89 +376,24 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
 
     if (show_loop_closure_editor_) {
         ImGui::Begin("Loop Closure Editor", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("Enter two keyframe IDs to suggest a manual loop closure.");
-        ImGui::Text("Global BA will run after each submission.");
-        ImGui::Separator();
-
-        // Fetch KF-A image when ID changes
-        if (lce_kf_id_a_ != lce_prev_id_a_) {
-            lce_prev_id_a_ = lce_kf_id_a_;
-            const cv::Mat img = map_publisher_->get_keyframe_image(lce_kf_id_a_);
-            if (!img.empty()) {
-                cv::Mat disp;
-                constexpr int preview_w = 320;
-                const double s = static_cast<double>(preview_w) / img.cols;
-                cv::resize(img, disp, cv::Size(), s, s);
-                if (disp.channels() == 1) {
-                    cv::cvtColor(disp, disp, cv::COLOR_GRAY2BGR);
-                }
-                lce_texture_a_ = glk::create_texture(disp);
-            }
-            else {
-                lce_texture_a_.reset();
-            }
-        }
-        // Fetch KF-B image when ID changes
-        if (lce_kf_id_b_ != lce_prev_id_b_) {
-            lce_prev_id_b_ = lce_kf_id_b_;
-            const cv::Mat img = map_publisher_->get_keyframe_image(lce_kf_id_b_);
-            if (!img.empty()) {
-                cv::Mat disp;
-                constexpr int preview_w = 320;
-                const double s = static_cast<double>(preview_w) / img.cols;
-                cv::resize(img, disp, cv::Size(), s, s);
-                if (disp.channels() == 1) {
-                    cv::cvtColor(disp, disp, cv::COLOR_GRAY2BGR);
-                }
-                lce_texture_b_ = glk::create_texture(disp);
-            }
-            else {
-                lce_texture_b_.reset();
-            }
-        }
-
-        // Left pane — Keyframe A
-        ImGui::BeginGroup();
-        ImGui::Text("Keyframe A");
-        ImGui::SetNextItemWidth(120.0f);
+        ImGui::Text("Keyframe A:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100.0f);
         ImGui::InputInt("##kf_a", &lce_kf_id_a_);
         if (lce_kf_id_a_ < 0) {
             lce_kf_id_a_ = 0;
         }
-        if (lce_texture_a_) {
-            const Eigen::Vector2i sz = lce_texture_a_->size();
-            ImGui::Image(reinterpret_cast<void*>(lce_texture_a_->id()), ImVec2(sz[0], sz[1]));
-        }
-        else {
-            ImGui::Dummy(ImVec2(320.0f, 240.0f));
-            ImGui::TextDisabled("(no image for this ID)");
-        }
-        ImGui::EndGroup();
-
-        ImGui::SameLine(0.0f, 16.0f);
-
-        // Right pane — Keyframe B
-        ImGui::BeginGroup();
-        ImGui::Text("Keyframe B");
-        ImGui::SetNextItemWidth(120.0f);
+        ImGui::Text("Keyframe B:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100.0f);
         ImGui::InputInt("##kf_b", &lce_kf_id_b_);
         if (lce_kf_id_b_ < 0) {
             lce_kf_id_b_ = 0;
         }
-        if (lce_texture_b_) {
-            const Eigen::Vector2i sz = lce_texture_b_->size();
-            ImGui::Image(reinterpret_cast<void*>(lce_texture_b_->id()), ImVec2(sz[0], sz[1]));
-        }
-        else {
-            ImGui::Dummy(ImVec2(320.0f, 240.0f));
-            ImGui::TextDisabled("(no image for this ID)");
-        }
-        ImGui::EndGroup();
-
         ImGui::Separator();
         const bool same_id = (lce_kf_id_a_ == lce_kf_id_b_);
         if (same_id) {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "KF A and KF B must be different.");
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "IDs must differ.");
         }
         const bool can_add = !same_id && lce_loop_closure_cb_;
         if (!can_add) {
@@ -989,7 +924,10 @@ void viewer::run() {
             break;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms_));
+        // When the LC editor is active there's no new tracking data arriving,
+        // so render at ~5 fps (200ms) instead of the tracking fps to save CPU/GPU.
+        const unsigned int sleep_ms = show_loop_closure_editor_ ? 200u : interval_ms_;
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
     }
 
     if (close_callback_) {

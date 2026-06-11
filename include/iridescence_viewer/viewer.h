@@ -226,10 +226,6 @@ private:
     int lce_submit_wait_frames_ = 0;
     int lce_kf_id_a_ = 0;
     int lce_kf_id_b_ = 0;
-    int lce_prev_id_a_ = -1;
-    int lce_prev_id_b_ = -1;
-    std::shared_ptr<glk::Texture> lce_texture_a_;
-    std::shared_ptr<glk::Texture> lce_texture_b_;
     std::function<void(unsigned int, unsigned int)> lce_loop_closure_cb_;
     std::function<bool()> lce_ba_is_running_fn_;
 
