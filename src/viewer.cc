@@ -349,6 +349,134 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
         ImGui::End();
     }
 
+    // ---- Manual Loop Closure Editor ----
+    // State machine: IDLE (editor shown) → SUBMITTED (waiting for BA to start)
+    // → BA_RUNNING (waiting for BA to finish) → IDLE (show editor again).
+    if (lce_state_ == LceState::SUBMITTED) {
+        if (lce_ba_is_running_fn_ && lce_ba_is_running_fn_()) {
+            lce_state_ = LceState::BA_RUNNING;
+            lce_submit_wait_frames_ = 0;
+        }
+        else {
+            ++lce_submit_wait_frames_;
+            if (lce_submit_wait_frames_ > 120) {
+                // BA never started — loop closure validation likely failed.
+                lce_state_ = LceState::IDLE;
+                lce_submit_wait_frames_ = 0;
+                show_loop_closure_editor_ = true;
+            }
+        }
+    }
+    else if (lce_state_ == LceState::BA_RUNNING) {
+        if (lce_ba_is_running_fn_ && !lce_ba_is_running_fn_()) {
+            lce_state_ = LceState::IDLE;
+            show_loop_closure_editor_ = true;
+        }
+    }
+
+    if (show_loop_closure_editor_) {
+        ImGui::Begin("Loop Closure Editor", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Text("Enter two keyframe IDs to suggest a manual loop closure.");
+        ImGui::Text("Global BA will run after each submission.");
+        ImGui::Separator();
+
+        // Fetch KF-A image when ID changes
+        if (lce_kf_id_a_ != lce_prev_id_a_) {
+            lce_prev_id_a_ = lce_kf_id_a_;
+            const cv::Mat img = map_publisher_->get_keyframe_image(lce_kf_id_a_);
+            if (!img.empty()) {
+                cv::Mat disp;
+                constexpr int preview_w = 320;
+                const double s = static_cast<double>(preview_w) / img.cols;
+                cv::resize(img, disp, cv::Size(), s, s);
+                if (disp.channels() == 1) {
+                    cv::cvtColor(disp, disp, cv::COLOR_GRAY2BGR);
+                }
+                lce_texture_a_ = glk::create_texture(disp);
+            }
+            else {
+                lce_texture_a_.reset();
+            }
+        }
+        // Fetch KF-B image when ID changes
+        if (lce_kf_id_b_ != lce_prev_id_b_) {
+            lce_prev_id_b_ = lce_kf_id_b_;
+            const cv::Mat img = map_publisher_->get_keyframe_image(lce_kf_id_b_);
+            if (!img.empty()) {
+                cv::Mat disp;
+                constexpr int preview_w = 320;
+                const double s = static_cast<double>(preview_w) / img.cols;
+                cv::resize(img, disp, cv::Size(), s, s);
+                if (disp.channels() == 1) {
+                    cv::cvtColor(disp, disp, cv::COLOR_GRAY2BGR);
+                }
+                lce_texture_b_ = glk::create_texture(disp);
+            }
+            else {
+                lce_texture_b_.reset();
+            }
+        }
+
+        // Left pane — Keyframe A
+        ImGui::BeginGroup();
+        ImGui::Text("Keyframe A");
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::InputInt("##kf_a", &lce_kf_id_a_);
+        if (lce_kf_id_a_ < 0) {
+            lce_kf_id_a_ = 0;
+        }
+        if (lce_texture_a_) {
+            const Eigen::Vector2i sz = lce_texture_a_->size();
+            ImGui::Image(reinterpret_cast<void*>(lce_texture_a_->id()), ImVec2(sz[0], sz[1]));
+        }
+        else {
+            ImGui::Dummy(ImVec2(320.0f, 240.0f));
+            ImGui::TextDisabled("(no image for this ID)");
+        }
+        ImGui::EndGroup();
+
+        ImGui::SameLine(0.0f, 16.0f);
+
+        // Right pane — Keyframe B
+        ImGui::BeginGroup();
+        ImGui::Text("Keyframe B");
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::InputInt("##kf_b", &lce_kf_id_b_);
+        if (lce_kf_id_b_ < 0) {
+            lce_kf_id_b_ = 0;
+        }
+        if (lce_texture_b_) {
+            const Eigen::Vector2i sz = lce_texture_b_->size();
+            ImGui::Image(reinterpret_cast<void*>(lce_texture_b_->id()), ImVec2(sz[0], sz[1]));
+        }
+        else {
+            ImGui::Dummy(ImVec2(320.0f, 240.0f));
+            ImGui::TextDisabled("(no image for this ID)");
+        }
+        ImGui::EndGroup();
+
+        ImGui::Separator();
+        const bool same_id = (lce_kf_id_a_ == lce_kf_id_b_);
+        if (same_id) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "KF A and KF B must be different.");
+        }
+        const bool can_add = !same_id && lce_loop_closure_cb_;
+        if (!can_add) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.4f);
+        }
+        if (ImGui::Button("Add Loop Closure") && can_add) {
+            lce_loop_closure_cb_(static_cast<unsigned int>(lce_kf_id_a_),
+                                 static_cast<unsigned int>(lce_kf_id_b_));
+            lce_state_ = LceState::SUBMITTED;
+            lce_submit_wait_frames_ = 0;
+            show_loop_closure_editor_ = false;
+        }
+        if (!can_add) {
+            ImGui::PopStyleVar();
+        }
+        ImGui::End();
+    }
+
     ImGui::Begin("ui", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::Checkbox("Select keypoint by ID", &select_keypoint_by_id_);
     if (select_keypoint_by_id_) {
