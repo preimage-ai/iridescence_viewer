@@ -872,8 +872,9 @@ void viewer::run() {
         if (show_columns_ && floorplan_aligned_ && column_map_analyzer_) {
             const double col_h = column_height_m_;
             for (const auto& col : column_map_analyzer_->columns()) {
-                // Build a scaled pose: diagonal encodes (width_x, width_y, height),
-                // translation places the centroid at mid-height.
+                // Floorplan metric frame: X right, Y down-in-plane, Z physically DOWN (into floor).
+                // Camera is at Z = -1.5 m (above floor). Columns extend from Z=0 (floor)
+                // upward, which in this frame means negative Z. Centre at Z = -col_h/2.
                 Eigen::Matrix4d col_pose = Eigen::Matrix4d::Zero();
                 col_pose(0, 0) = col.width_x_m;
                 col_pose(1, 1) = col.width_y_m;
@@ -881,7 +882,7 @@ void viewer::run() {
                 col_pose(3, 3) = 1.0;
                 col_pose(0, 3) = col.centroid_m.x();
                 col_pose(1, 3) = col.centroid_m.y();
-                col_pose(2, 3) = col_h * 0.5;
+                col_pose(2, 3) = -col_h * 0.5;
                 const std::string name = "column_" + std::to_string(col.id);
                 viewer->update_drawable(
                     name,
