@@ -7,6 +7,7 @@
 #include "stella_vslam/publish/map_publisher.h"
 #include "stella_vslam/util/yaml.h"
 #include "stella_vslam/floorplan/floorplan.h"
+#include "stella_vslam/floorplan/column_map_analyzer.h"
 
 #include <glk/primitives/primitives.hpp>
 #include <glk/pointcloud_buffer.hpp>
@@ -58,6 +59,29 @@ unsigned int count_common_words(const stella_vslam::data::bow_vector& lhs, const
     }
 
     return count;
+}
+
+// Dot product of two TF-IDF-weighted, L2-normalised bow_vectors — same formula used by loop_detector.
+float compute_bow_score(const stella_vslam::data::bow_vector& lhs, const stella_vslam::data::bow_vector& rhs) {
+    auto lhs_itr = lhs.begin();
+    auto rhs_itr = rhs.begin();
+    float score = 0.0f;
+
+    while (lhs_itr != lhs.end() && rhs_itr != rhs.end()) {
+        if (lhs_itr->first == rhs_itr->first) {
+            score += static_cast<float>(lhs_itr->second) * static_cast<float>(rhs_itr->second);
+            ++lhs_itr;
+            ++rhs_itr;
+        }
+        else if (lhs_itr->first < rhs_itr->first) {
+            ++lhs_itr;
+        }
+        else {
+            ++rhs_itr;
+        }
+    }
+
+    return score;
 }
 
 loop_search_debug_info compute_loop_search_debug_info(const std::shared_ptr<stella_vslam::data::keyframe>& query_keyfrm,
@@ -229,17 +253,43 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
     if (loop_debug_source_keyframe_id_ >= 0) {
         ImGui::Text("Loop source keyframe: %d", loop_debug_source_keyframe_id_);
         ImGui::Text("Current frame -> source distance [m]: %.3f", loop_debug_current_to_source_distance_m_);
+        ImGui::Separator();
+        // Covisibility BoW scores — these determine the min_score used as the BoW DB threshold.
+        // Any loop candidate whose BoW score is below this min is rejected before the matcher runs.
+        if (loop_debug_covis_min_score_ >= 0.0f) {
+            ImGui::Text("Covis BoW score  min=%.4f  max=%.4f  (min = BoW DB threshold)",
+                        loop_debug_covis_min_score_, loop_debug_covis_max_score_);
+            if (ImGui::TreeNode("Covisibility scores")) {
+                // Sort descending by score for readability
+                auto sorted = loop_debug_covis_scores_;
+                std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.score > b.score; });
+                ImGui::BeginChild("covis_scores", ImVec2(0.0f, 120.0f), true);
+                for (const auto& e : sorted) {
+                    const bool is_min = (e.score == loop_debug_covis_min_score_);
+                    if (is_min) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.2f, 1.0f));
+                    ImGui::Text("KF %u  bow=%.4f%s", e.kf_id, e.score, is_min ? " [threshold]" : "");
+                    if (is_min) ImGui::PopStyleColor();
+                }
+                ImGui::EndChild();
+                ImGui::TreePop();
+            }
+        }
+        else {
+            ImGui::Text("Covis BoW scores: n/a (no covisibilities)");
+        }
+        ImGui::Separator();
         ImGui::Text("Search-rejected candidates: %d", loop_debug_rejected_candidates_);
         ImGui::Text("Max common words: %u", loop_debug_max_common_words_);
         ImGui::Text("Common-word threshold: %u", loop_debug_min_common_words_threshold_);
         ImGui::Text("Candidates passing common-word gate: %d", loop_debug_candidates_passing_common_words_gate_);
         ImGui::Text("Candidates listed: %zu", loop_debug_candidates_.size());
-        ImGui::BeginChild("loop_debug_candidates", ImVec2(0.0f, 220.0f), true);
+        ImGui::BeginChild("loop_debug_candidates", ImVec2(0.0f, 280.0f), true);
         for (const auto& candidate : loop_debug_candidates_) {
             if (loop_detector_config_.reject_by_graph_distance) {
                 if (candidate.graph_distance >= 0) {
-                    ImGui::Text("KF %u | common %u%s | graph %d%s | shared %u | dist %.3f m%s",
+                    ImGui::Text("KF %u | bow %.4f | common %u%s | graph %d%s | shared %u | dist %.2f m%s",
                                 candidate.keyframe_id,
+                                candidate.bow_score,
                                 candidate.num_common_words,
                                 candidate.passes_common_words_gate ? " pass" : " fail",
                                 candidate.graph_distance,
@@ -249,8 +299,9 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
                                 candidate.has_loop_edge ? " | loop-edge" : "");
                 }
                 else {
-                    ImGui::Text("KF %u | common %u%s | graph - | shared %u | dist %.3f m%s",
+                    ImGui::Text("KF %u | bow %.4f | common %u%s | graph - | shared %u | dist %.2f m%s",
                                 candidate.keyframe_id,
+                                candidate.bow_score,
                                 candidate.num_common_words,
                                 candidate.passes_common_words_gate ? " pass" : " fail",
                                 candidate.shared_landmarks,
@@ -259,8 +310,9 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
                 }
             }
             else {
-                ImGui::Text("KF %u | common %u%s | connected %s%s | shared %u | dist %.3f m%s",
+                ImGui::Text("KF %u | bow %.4f | common %u%s | connected %s%s | shared %u | dist %.2f m%s",
                             candidate.keyframe_id,
+                            candidate.bow_score,
                             candidate.num_common_words,
                             candidate.passes_common_words_gate ? " pass" : " fail",
                             candidate.connected ? "yes" : "no",
@@ -483,6 +535,9 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
     if (floorplan_) {
         ImGui::Checkbox("Show Floorplan", &show_floorplan_);
     }
+    if (column_map_analyzer_) {
+        ImGui::Checkbox("Show Columns", &show_columns_);
+    }
     for (auto&& pair : checkbox_callback_map_) {
         if (ImGui::Checkbox(pair.first.c_str(), &is_paused_)) {
             if (pair.second) {
@@ -564,11 +619,34 @@ void viewer::run() {
         loop_debug_max_common_words_ = 0;
         loop_debug_min_common_words_threshold_ = 0;
         loop_debug_candidates_passing_common_words_gate_ = 0;
+        loop_debug_covis_min_score_ = -1.0f;
+        loop_debug_covis_max_score_ = -1.0f;
+        loop_debug_covis_scores_.clear();
 
         if (show_potential_loop_candidates_ && loop_source_keyfrm) {
             loop_debug_source_keyframe_id_ = static_cast<int>(loop_source_keyfrm->id_);
             const Eigen::Vector3d source_position = rot_ros_to_cv_map_frame_ * loop_source_keyfrm->get_trans_wc();
             loop_debug_current_to_source_distance_m_ = static_cast<float>((current_frame_position - source_position).norm());
+
+            // Compute BoW scores for all covisibilities of the source KF — this is what
+            // loop_detector uses to set min_score (the BoW DB threshold for loop candidates).
+            {
+                const auto covis = loop_source_keyfrm->graph_node_->get_covisibilities();
+                loop_debug_covis_scores_.clear();
+                loop_debug_covis_min_score_ = 1.0f;
+                loop_debug_covis_max_score_ = 0.0f;
+                for (const auto& c : covis) {
+                    if (!c || c->will_be_erased()) continue;
+                    const float s = compute_bow_score(loop_source_keyfrm->bow_vec_, c->bow_vec_);
+                    loop_debug_covis_scores_.push_back({c->id_, s});
+                    if (s < loop_debug_covis_min_score_) loop_debug_covis_min_score_ = s;
+                    if (s > loop_debug_covis_max_score_) loop_debug_covis_max_score_ = s;
+                }
+                if (loop_debug_covis_scores_.empty()) {
+                    loop_debug_covis_min_score_ = -1.0f;
+                    loop_debug_covis_max_score_ = -1.0f;
+                }
+            }
 
             const auto connected_keyfrms = loop_source_keyfrm->graph_node_->get_connected_keyframes();
             const auto loop_edges = loop_source_keyfrm->graph_node_->get_loop_edges();
@@ -595,6 +673,7 @@ void viewer::run() {
                                                ? -1
                                                : static_cast<int>(graph_distance_itr->second);
                 const unsigned int num_common_words = count_common_words(loop_source_keyfrm->bow_vec_, keyfrm->bow_vec_);
+                const float bow_score = compute_bow_score(loop_source_keyfrm->bow_vec_, keyfrm->bow_vec_);
                 if (!rejected_by_search) {
                     loop_debug_max_common_words_ = std::max(loop_debug_max_common_words_, num_common_words);
                 }
@@ -602,6 +681,7 @@ void viewer::run() {
                 loop_candidate_draws.push_back({keyfrm,
                                                 {keyfrm->id_,
                                                  num_common_words,
+                                                 bow_score,
                                                  distance_m,
                                                  loop_source_keyfrm->graph_node_->get_num_shared_landmarks(keyfrm),
                                                  graph_distance,
@@ -628,6 +708,9 @@ void viewer::run() {
                 }
                 if (lhs.summary.rejected_by_search != rhs.summary.rejected_by_search) {
                     return lhs.summary.rejected_by_search < rhs.summary.rejected_by_search;
+                }
+                if (lhs.summary.bow_score != rhs.summary.bow_score) {
+                    return lhs.summary.bow_score > rhs.summary.bow_score;
                 }
                 if (lhs.summary.num_common_words != rhs.summary.num_common_words) {
                     return lhs.summary.num_common_words > rhs.summary.num_common_words;
@@ -784,6 +867,28 @@ void viewer::run() {
 
         viewer->set_draw_xy_grid(false);
         viewer->update_drawable("coordinate_system", glk::Primitives::coordinate_system(), guik::VertexColor());
+
+        // Render column cuboids (after floorplan alignment so world frame = floorplan frame)
+        if (show_columns_ && floorplan_aligned_ && column_map_analyzer_) {
+            const double col_h = column_height_m_;
+            for (const auto& col : column_map_analyzer_->columns()) {
+                // Build a scaled pose: diagonal encodes (width_x, width_y, height),
+                // translation places the centroid at mid-height.
+                Eigen::Matrix4d col_pose = Eigen::Matrix4d::Zero();
+                col_pose(0, 0) = col.width_x_m;
+                col_pose(1, 1) = col.width_y_m;
+                col_pose(2, 2) = col_h;
+                col_pose(3, 3) = 1.0;
+                col_pose(0, 3) = col.centroid_m.x();
+                col_pose(1, 3) = col.centroid_m.y();
+                col_pose(2, 3) = col_h * 0.5;
+                const std::string name = "column_" + std::to_string(col.id);
+                viewer->update_drawable(
+                    name,
+                    glk::Primitives::cube(),
+                    guik::FlatColor(Eigen::Vector4f(0.3f, 0.6f, 1.0f, 0.5f), col_pose));
+            }
+        }
 
         // Update texture
         std::vector<cv::Mat> images;

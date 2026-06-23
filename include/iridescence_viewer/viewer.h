@@ -15,6 +15,7 @@ namespace stella_vslam {
 
 class config;
 class Floorplan;
+class ColumnMapAnalyzer;
 namespace data {
 class keyframe;
 class landmark;
@@ -78,6 +79,13 @@ public:
 
     void set_floorplan(std::shared_ptr<stella_vslam::Floorplan> floorplan);
 
+    //! Provide the column map analyzer for 3D cuboid rendering after floorplan alignment.
+    void set_column_map_analyzer(std::shared_ptr<stella_vslam::ColumnMapAnalyzer> analyzer,
+                                 double column_height_m = 3.0) {
+        column_map_analyzer_ = std::move(analyzer);
+        column_height_m_     = column_height_m;
+    }
+
     //! Call once the mapping module has applied the floorplan rigid alignment.
     //! Sets T_F_Ws = Identity so display and click handler work in floorplan = stella world frame.
     void set_floorplan_aligned() {
@@ -128,6 +136,7 @@ private:
     struct loop_debug_candidate_summary {
         unsigned int keyframe_id = 0;
         unsigned int num_common_words = 0;
+        float bow_score = 0.0f;
         float distance_m = 0.0f;
         unsigned int shared_landmarks = 0;
         int graph_distance = -1;
@@ -205,8 +214,17 @@ private:
     unsigned int loop_debug_min_common_words_threshold_ = 0;
     int loop_debug_candidates_passing_common_words_gate_ = 0;
     std::vector<loop_debug_candidate_summary> loop_debug_candidates_;
+    float loop_debug_covis_min_score_ = -1.0f;
+    float loop_debug_covis_max_score_ = -1.0f;
+    struct covis_score_entry { unsigned int kf_id; float score; };
+    std::vector<covis_score_entry> loop_debug_covis_scores_;
 
     Eigen::Matrix3d rot_ros_to_cv_map_frame_;
+
+    // column map analyzer for 3D cuboid rendering
+    std::shared_ptr<stella_vslam::ColumnMapAnalyzer> column_map_analyzer_;
+    double column_height_m_ = 3.0;
+    bool   show_columns_    = true;
 
     // floorplan mini-map
     std::shared_ptr<stella_vslam::Floorplan> floorplan_;
