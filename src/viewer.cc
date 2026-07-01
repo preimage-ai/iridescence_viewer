@@ -349,118 +349,8 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
 
     if (floorplan_ && show_floorplan_ && floorplan_texture_) {
         ImGui::Begin("Floorplan", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::InputInt("Anchor every N KFs", &anchor_interval_kf_);
         const Eigen::Vector2i size = floorplan_texture_->size();
-        ImVec2 fp_screen_pos = ImGui::GetCursorScreenPos();
         ImGui::Image(reinterpret_cast<void*>(floorplan_texture_->id()), ImVec2(size[0], size[1]));
-        ImVec2 mouse_pos = ImGui::GetIO().MousePos;
-        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0) && anchor_cb_ && floorplan_aligned_) {
-            // Pixel click → floorplan metric = slam world coordinates (same frame after alignment)
-            const double x_m = (mouse_pos.x - fp_screen_pos.x) / fp_disp_scale_ * floorplan_->mpp;
-            const double y_m = (mouse_pos.y - fp_screen_pos.y) / fp_disp_scale_ * floorplan_->mpp;
-
-            std::vector<std::shared_ptr<stella_vslam::data::keyframe>> click_kfs;
-            map_publisher_->get_keyframes(click_kfs);
-            if (!click_kfs.empty()) {
-                const auto& latest_kf = *std::max_element(click_kfs.begin(), click_kfs.end(),
-                    [](const auto& a, const auto& b) { return a->id_ < b->id_; });
-
-                // Preserve slam-estimated yaw, z, pitch, roll — place XY at clicked position
-                auto p25 = floorplan_->se3_to_pose2d5(latest_kf->get_pose_wc());
-                p25.x_m = x_m;
-                p25.y_m = y_m;
-                const stella_vslam::Mat44_t new_pose_wc = floorplan_->pose2d5_to_se3(p25);
-
-                // Build pose_cw from pose_wc (SE3 inversion: R^T, -R^T*t)
-                const auto R = new_pose_wc.block<3, 3>(0, 0);
-                stella_vslam::Mat44_t new_pose_cw = stella_vslam::Mat44_t::Identity();
-                new_pose_cw.block<3, 3>(0, 0) = R.transpose();
-                new_pose_cw.block<3, 1>(0, 3) = -R.transpose() * new_pose_wc.block<3, 1>(0, 3);
-
-                spdlog::info("viewer: anchor click — KF {} at ({:.2f}, {:.2f}) m  "
-                             "slam-yaw={:.1f}deg  (display px {}, {})",
-                             latest_kf->id_, x_m, y_m,
-                             p25.yaw_rad * 180.0 / M_PI,
-                             static_cast<int>(mouse_pos.x - fp_screen_pos.x),
-                             static_cast<int>(mouse_pos.y - fp_screen_pos.y));
-                anchor_cb_(latest_kf->id_, new_pose_cw);
-                anchor_kf_preview_texture_.reset();
-                anchor_marker_pt_ = cv::Point(
-                    static_cast<int>(mouse_pos.x - fp_screen_pos.x),
-                    static_cast<int>(mouse_pos.y - fp_screen_pos.y));
-            }
-        }
-        ImGui::End();
-    }
-
-    if (anchor_kf_preview_texture_) {
-        const std::string win_title = "Anchor KF " + std::to_string(anchor_preview_kf_id_);
-        ImGui::Begin(win_title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        const Eigen::Vector2i sz = anchor_kf_preview_texture_->size();
-        ImGui::Image(reinterpret_cast<void*>(anchor_kf_preview_texture_->id()), ImVec2(sz[0], sz[1]));
-        ImGui::End();
-    }
-
-    // ---- Manual Loop Closure Editor ----
-    // State machine: IDLE (editor shown) → SUBMITTED (waiting for BA to start)
-    // → BA_RUNNING (waiting for BA to finish) → IDLE (show editor again).
-    if (lce_state_ == LceState::SUBMITTED) {
-        if (lce_ba_is_running_fn_ && lce_ba_is_running_fn_()) {
-            lce_state_ = LceState::BA_RUNNING;
-            lce_submit_wait_frames_ = 0;
-        }
-        else {
-            ++lce_submit_wait_frames_;
-            if (lce_submit_wait_frames_ > 120) {
-                // BA never started — loop closure validation likely failed.
-                lce_state_ = LceState::IDLE;
-                lce_submit_wait_frames_ = 0;
-                show_loop_closure_editor_ = true;
-            }
-        }
-    }
-    else if (lce_state_ == LceState::BA_RUNNING) {
-        if (lce_ba_is_running_fn_ && !lce_ba_is_running_fn_()) {
-            lce_state_ = LceState::IDLE;
-            show_loop_closure_editor_ = true;
-        }
-    }
-
-    if (show_loop_closure_editor_) {
-        ImGui::Begin("Loop Closure Editor", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("Keyframe A:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(100.0f);
-        ImGui::InputInt("##kf_a", &lce_kf_id_a_);
-        if (lce_kf_id_a_ < 0) {
-            lce_kf_id_a_ = 0;
-        }
-        ImGui::Text("Keyframe B:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(100.0f);
-        ImGui::InputInt("##kf_b", &lce_kf_id_b_);
-        if (lce_kf_id_b_ < 0) {
-            lce_kf_id_b_ = 0;
-        }
-        ImGui::Separator();
-        const bool same_id = (lce_kf_id_a_ == lce_kf_id_b_);
-        if (same_id) {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "IDs must differ.");
-        }
-        const bool can_add = !same_id && lce_loop_closure_cb_;
-        if (!can_add) {
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.4f);
-        }
-        if (ImGui::Button("Add Loop Closure") && can_add) {
-            lce_loop_closure_cb_(static_cast<unsigned int>(lce_kf_id_a_),
-                                 static_cast<unsigned int>(lce_kf_id_b_));
-            lce_state_ = LceState::SUBMITTED;
-            lce_submit_wait_frames_ = 0;
-            show_loop_closure_editor_ = false;
-        }
-        if (!can_add) {
-            ImGui::PopStyleVar();
-        }
         ImGui::End();
     }
 
@@ -987,42 +877,6 @@ void viewer::run() {
                 has_prev = true;
             }
 
-            // Auto-pause every N KFs after floorplan alignment has fired.
-            // On first alignment tick: record current KF as baseline without pausing.
-            // Subsequent ticks: pause once N more KFs have accumulated.
-            if (floorplan_aligned_ && anchor_interval_kf_ > 0) {
-                const int cur_kf = static_cast<int>(sorted_kfs.size());
-                if (last_autopause_kf_ < 0) {
-                    last_autopause_kf_ = cur_kf;  // baseline — no pause yet
-                }
-                else if (cur_kf >= last_autopause_kf_ + anchor_interval_kf_) {
-                    last_autopause_kf_ = cur_kf;
-                    // Snapshot the triggering KF's image for the anchor preview window
-                    if (!sorted_kfs.empty() && sorted_kfs.back()) {
-                        const auto& trigger_kf = sorted_kfs.back();
-                        anchor_preview_kf_id_ = trigger_kf->id_;
-                        const cv::Mat kf_img = map_publisher_->get_keyframe_image(trigger_kf->id_);
-                        if (!kf_img.empty()) {
-                            cv::Mat preview;
-                            constexpr int preview_w = 480;
-                            const double scale = static_cast<double>(preview_w) / kf_img.cols;
-                            cv::resize(kf_img, preview, cv::Size(), scale, scale);
-                            if (preview.channels() == 1) {
-                                cv::cvtColor(preview, preview, cv::COLOR_GRAY2BGR);
-                            }
-                            anchor_kf_preview_texture_ = glk::create_texture(preview);
-                        }
-                    }
-                    if (autopause_cb_) autopause_cb_();
-                }
-            }
-
-            // Orange ring at last placed anchor
-            if (anchor_marker_pt_.x >= 0 && anchor_marker_pt_.x < fp_disp_w_
-                    && anchor_marker_pt_.y >= 0 && anchor_marker_pt_.y < fp_disp_h_) {
-                cv::circle(disp, anchor_marker_pt_, 8, cv::Scalar(0, 128, 255), 2);
-            }
-
             floorplan_texture_ = glk::create_texture(disp);
         }
 
@@ -1030,9 +884,7 @@ void viewer::run() {
             break;
         }
 
-        // When the LC editor is active there's no new tracking data arriving,
-        // so render at ~5 fps (200ms) instead of the tracking fps to save CPU/GPU.
-        const unsigned int sleep_ms = show_loop_closure_editor_ ? 200u : interval_ms_;
+        const unsigned int sleep_ms = interval_ms_;
         std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
     }
 

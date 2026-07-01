@@ -93,32 +93,6 @@ public:
         floorplan_aligned_ = true;
     }
 
-    void add_autopause_callback(std::function<void()> cb) {
-        autopause_cb_ = std::move(cb);
-    }
-
-    void add_floorplan_anchor_callback(
-        std::function<void(unsigned int, const stella_vslam::Mat44_t&)> cb) {
-        anchor_cb_ = std::move(cb);
-    }
-
-    // Manual loop closure editor — shown after all frames are fed so the user
-    // can pick keyframe pairs, submit them, and iteratively run global BA.
-    void show_loop_closure_editor(bool show) {
-        show_loop_closure_editor_ = show;
-        if (show) {
-            lce_state_ = LceState::IDLE;
-        }
-    }
-
-    void add_loop_closure_callback(std::function<void(unsigned int, unsigned int)> cb) {
-        lce_loop_closure_cb_ = std::move(cb);
-    }
-
-    void set_lce_ba_is_running_fn(std::function<bool()> fn) {
-        lce_ba_is_running_fn_ = std::move(fn);
-    }
-
 private:
     struct loop_detector_config {
         bool enabled = true;
@@ -237,25 +211,8 @@ private:
     bool show_floorplan_ = true;
     std::shared_ptr<glk::Texture> floorplan_texture_;
 
-    // Manual loop closure editor
-    enum class LceState { IDLE, SUBMITTED, BA_RUNNING };
-    bool show_loop_closure_editor_ = false;
-    LceState lce_state_ = LceState::IDLE;
-    int lce_submit_wait_frames_ = 0;
-    int lce_kf_id_a_ = 0;
-    int lce_kf_id_b_ = 0;
-    std::function<void(unsigned int, unsigned int)> lce_loop_closure_cb_;
-    std::function<bool()> lce_ba_is_running_fn_;
-
     // floorplan anchor placement
-    int  anchor_interval_kf_ = 0;    // pause every N KFs after alignment (0 = disabled)
-    int  last_autopause_kf_  = -1;   // KF count when last auto-pause fired (-1 = never)
     bool floorplan_aligned_  = false; // set true once rigid alignment has fired
-    std::function<void()> autopause_cb_;
-    std::function<void(unsigned int, const stella_vslam::Mat44_t&)> anchor_cb_;
-    cv::Point anchor_marker_pt_{-1, -1};
-    unsigned int anchor_preview_kf_id_ = 0;
-    std::shared_ptr<glk::Texture> anchor_kf_preview_texture_;
 
     //-----------------------------------------
     // management for terminate process
