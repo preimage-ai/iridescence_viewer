@@ -80,10 +80,14 @@ public:
     void set_floorplan(std::shared_ptr<stella_vslam::Floorplan> floorplan);
 
     //! Provide the column map analyzer for 3D cuboid rendering after floorplan alignment.
+    //! column_semantic_label is the segmenter label used to identify column landmarks; it drives
+    //! the "Show only column landmarks" filter (-1 = unknown, filter disabled).
     void set_column_map_analyzer(std::shared_ptr<stella_vslam::ColumnMapAnalyzer> analyzer,
-                                 double column_height_m = 3.0) {
-        column_map_analyzer_ = std::move(analyzer);
-        column_height_m_     = column_height_m;
+                                 double column_height_m = 3.0,
+                                 int column_semantic_label = -1) {
+        column_map_analyzer_    = std::move(analyzer);
+        column_height_m_        = column_height_m;
+        column_semantic_label_  = column_semantic_label;
     }
 
     //! Call once the mapping module has applied the floorplan rigid alignment.
@@ -170,6 +174,8 @@ private:
     bool point_splatting_ = true;
     float point_radius_ = 0.01;
     bool color_by_semantics_ = false;
+    bool show_only_column_landmarks_ = false;
+    bool highlight_tsdf_active_ = false;  // color TSDF-active column landmarks distinctly
     float current_frame_scale_ = 0.05f;
     float keyframe_scale_ = 0.05f;
     float selected_landmark_scale_ = 0.01f;
@@ -199,6 +205,7 @@ private:
     std::shared_ptr<stella_vslam::ColumnMapAnalyzer> column_map_analyzer_;
     double column_height_m_ = 3.0;
     bool   show_columns_    = true;
+    int    column_semantic_label_ = -1;  // segmenter label for column landmarks (-1 = unknown)
 
     // floorplan mini-map
     std::shared_ptr<stella_vslam::Floorplan> floorplan_;

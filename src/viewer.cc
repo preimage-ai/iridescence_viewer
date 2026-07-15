@@ -422,6 +422,12 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
         ImGui::DragFloat("Point radius", &point_radius_, 0.001f, 0.001f, 1.0f);
     }
     ImGui::Checkbox("Color by semantics", &color_by_semantics_);
+    if (column_semantic_label_ >= 0) {
+        ImGui::Checkbox("Show only column landmarks", &show_only_column_landmarks_);
+    }
+    if (column_map_analyzer_) {
+        ImGui::Checkbox("Highlight TSDF-active columns", &highlight_tsdf_active_);
+    }
     if (floorplan_) {
         ImGui::Checkbox("Show Floorplan", &show_floorplan_);
     }
@@ -694,11 +700,18 @@ void viewer::run() {
 
         std::vector<Eigen::Vector3f> points;
         std::vector<Eigen::Vector3f> normals;
-        std::vector<Eigen::Vector4f> semantics_colors;
+        std::vector<Eigen::Vector4f> render_colors;
+        // Per-point colour uses vertex colours whenever semantics OR the TSDF-active highlight is on.
+        const bool use_vertex_colors = color_by_semantics_ || highlight_tsdf_active_;
         float min_distance = std::numeric_limits<float>::max();
         unsigned int min_distance_id = 0;
         for (const auto& lm : landmarks) {
             if (!lm || lm->will_be_erased()) {
+                continue;
+            }
+            // Diagnostic filter: restrict the sparse cloud to column-labelled landmarks only.
+            if (show_only_column_landmarks_ && column_semantic_label_ >= 0
+                && lm->semantic_label_ != column_semantic_label_) {
                 continue;
             }
             const Eigen::Vector3d pos_w = rot_ros_to_cv_map_frame_ * lm->get_pos_in_world();
@@ -714,7 +727,19 @@ void viewer::run() {
                 }
             }
             points.push_back(pos_w.cast<float>());
-            semantics_colors.push_back(label_to_color(lm->semantic_label_));
+            // Colour precedence: TSDF-active marker (when highlighting) > semantic > default orange.
+            Eigen::Vector4f color = color_by_semantics_
+                                        ? label_to_color(lm->semantic_label_)
+                                        : Eigen::Vector4f(1.0f, 0.5f, 0.0f, 1.0f);
+            if (highlight_tsdf_active_) {
+                if (lm->is_column_tsdf_active_) {
+                    color = Eigen::Vector4f(0.1f, 0.8f, 1.0f, 1.0f);       // active TSDF marker
+                }
+                else if (!color_by_semantics_) {
+                    color = Eigen::Vector4f(0.4f, 0.4f, 0.4f, 1.0f);       // dim the inactive
+                }
+            }
+            render_colors.push_back(color);
             if (point_splatting_) {
                 normals.push_back((rot_ros_to_cv_map_frame_ * lm->get_obs_mean_normal()).cast<float>());
             }
@@ -726,8 +751,8 @@ void viewer::run() {
             }
         }
         auto cloud_buffer = std::make_shared<glk::PointCloudBuffer>(points);
-        if (color_by_semantics_) {
-            cloud_buffer->add_color(semantics_colors);
+        if (use_vertex_colors) {
+            cloud_buffer->add_color(render_colors);
         }
 
         if (point_splatting_) {
@@ -741,14 +766,14 @@ void viewer::run() {
             splatting->set_cloud_buffer(cloud_buffer);
 
             const auto map_shader_flat = guik::FlatColor(Eigen::Vector4f(1.0f, 0.5f, 0.0f, 1.0f));
-            if (color_by_semantics_) {
+            if (use_vertex_colors) {
                 viewer->update_drawable("map", splatting, guik::VertexColor());
             } else {
                 viewer->update_drawable("map", splatting, map_shader_flat);
             }
         }
         else {
-            if (color_by_semantics_) {
+            if (use_vertex_colors) {
                 viewer->update_drawable("map", cloud_buffer, guik::VertexColor());
             } else {
                 viewer->update_drawable("map", cloud_buffer, guik::FlatColor(Eigen::Vector4f(1.0f, 0.5f, 0.0f, 1.0f)));
@@ -761,6 +786,12 @@ void viewer::run() {
         // Render column cuboids (after floorplan alignment so world frame = floorplan frame)
         if (show_columns_ && floorplan_aligned_ && column_map_analyzer_) {
             const double col_h = column_height_m_;
+            // The column centroids come straight from the floorplan metric frame (same frame as
+            // lm->get_pos_in_world()), but every other drawable — landmarks, path, keyframes — is
+            // rotated into the display frame by rot_ros_to_cv_map_frame_. The cuboids must get the
+            // SAME rotation or they land on a different plane. Build its homogeneous form once.
+            Eigen::Matrix4d rot_disp = Eigen::Matrix4d::Identity();
+            rot_disp.block<3, 3>(0, 0) = rot_ros_to_cv_map_frame_;
             for (const auto& col : column_map_analyzer_->columns()) {
                 // Floorplan metric frame: X right, Y down-in-plane, Z physically DOWN (into floor).
                 // Camera is at Z = -1.5 m (above floor). Columns extend from Z=0 (floor)
@@ -773,11 +804,12 @@ void viewer::run() {
                 col_pose(0, 3) = col.centroid_m.x();
                 col_pose(1, 3) = col.centroid_m.y();
                 col_pose(2, 3) = -col_h * 0.5;
+                const Eigen::Matrix4d col_pose_display = rot_disp * col_pose;
                 const std::string name = "column_" + std::to_string(col.id);
                 viewer->update_drawable(
                     name,
                     glk::Primitives::cube(),
-                    guik::FlatColor(Eigen::Vector4f(0.3f, 0.6f, 1.0f, 0.5f), col_pose));
+                    guik::FlatColor(Eigen::Vector4f(0.3f, 0.6f, 1.0f, 0.5f), col_pose_display));
             }
         }
 
