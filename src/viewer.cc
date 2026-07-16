@@ -909,6 +909,36 @@ void viewer::run() {
                 has_prev = true;
             }
 
+            // Overlay column-landmark XY positions, projected through the SAME to_pixel() path as
+            // the keyframe trajectory above. This lets a shift between the 3D cuboids/cloud and the
+            // 2D mini-map be read off directly: the dots here should sit on the blue column
+            // footprints of the floorplan image. Only drawn when the column filter is active.
+            if (show_only_column_landmarks_ && column_semantic_label_ >= 0) {
+                for (const auto& lm : landmarks) {
+                    if (!lm || lm->will_be_erased()) {
+                        continue;
+                    }
+                    if (lm->semantic_label_ != column_semantic_label_) {
+                        continue;
+                    }
+                    const stella_vslam::Vec3_t pos_w = lm->get_pos_in_world();
+                    const Eigen::Vector4d pw_h(pos_w.x(), pos_w.y(), pos_w.z(), 1.0);
+                    const Eigen::Vector4d pf_h = floorplan_T_F_Ws_ * pw_h;
+                    const auto fp_px = floorplan_->to_pixel(pf_h.x(), pf_h.y());
+                    const cv::Point pt(static_cast<int>(fp_px.x * fp_disp_scale_),
+                                       static_cast<int>(fp_px.y * fp_disp_scale_));
+                    if (pt.x < 0 || pt.x >= fp_disp_w_ || pt.y < 0 || pt.y >= fp_disp_h_) {
+                        continue;
+                    }
+                    // Match the 3D colours: sky-blue for TSDF-active markers (when highlighting),
+                    // orange for the remaining column landmarks. BGR order for OpenCV.
+                    const bool active = highlight_tsdf_active_ && lm->is_column_tsdf_active_;
+                    const cv::Scalar color = active ? cv::Scalar(255, 204, 26)   // sky-blue (3D cyan)
+                                                    : cv::Scalar(0, 128, 255);   // orange
+                    cv::circle(disp, pt, 2, color, -1);
+                }
+            }
+
             floorplan_texture_ = glk::create_texture(disp);
         }
 
