@@ -90,6 +90,24 @@ public:
         column_semantic_label_  = column_semantic_label;
     }
 
+    //! One zfloc localization result paired with the keyframe it corrects.
+    struct zfloc_anchor {
+        unsigned int kf_id = 0;
+        double x_m = 0.0; //!< corrected position, world/floorplan-metric frame
+        double y_m = 0.0;
+    };
+
+    //! Overlay the zfloc corrections on the floorplan mini-map for diagnosis: each anchor is a
+    //! BLUE dot, the keyframe it corrects is a GREEN dot, and a line joins them. The pattern of
+    //! those lines is the diagnosis — if they all point the same way, or fan out proportionally
+    //! to distance, the corrections carry a systematic frame/scale error rather than describing
+    //! real drift. Enables the "zfloc diagnostic" checkbox, which also suppresses the full
+    //! keyframe path so only the corrected keyframes are drawn.
+    void set_zfloc_anchors(std::vector<zfloc_anchor> anchors) {
+        std::lock_guard<std::mutex> lock(mtx_zfloc_anchors_);
+        zfloc_anchors_ = std::move(anchors);
+    }
+
     //! Call once the mapping module has applied the floorplan rigid alignment.
     //! Sets T_F_Ws = Identity so display and click handler work in floorplan = stella world frame.
     void set_floorplan_aligned() {
@@ -220,6 +238,12 @@ private:
 
     // floorplan anchor placement
     bool floorplan_aligned_  = false; // set true once rigid alignment has fired
+
+    // zfloc correction diagnostic overlay
+    std::vector<zfloc_anchor> zfloc_anchors_;
+    mutable std::mutex mtx_zfloc_anchors_;
+    bool show_zfloc_diag_ = true;   //!< draw anchors + their keyframes + correction vectors
+    bool zfloc_diag_only_ = true;   //!< hide the full keyframe path, show only corrected ones
 
     //-----------------------------------------
     // management for terminate process

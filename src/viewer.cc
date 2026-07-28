@@ -431,6 +431,17 @@ void viewer::ui_callback(guik::LightViewer* viewer) {
     if (floorplan_) {
         ImGui::Checkbox("Show Floorplan", &show_floorplan_);
     }
+    {
+        std::lock_guard<std::mutex> lock(mtx_zfloc_anchors_);
+        if (!zfloc_anchors_.empty()) {
+            ImGui::Checkbox("zfloc diagnostic", &show_zfloc_diag_);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%zu: blue=zfloc, green=map)", zfloc_anchors_.size());
+            if (show_zfloc_diag_) {
+                ImGui::Checkbox("  corrected keyframes only", &zfloc_diag_only_);
+            }
+        }
+    }
     if (column_map_analyzer_) {
         ImGui::Checkbox("Show Columns", &show_columns_);
     }
@@ -881,10 +892,22 @@ void viewer::run() {
             // Mark first-camera position (red dot, BGR)
             cv::circle(disp, cv::Point(fp_init_px_, fp_init_py_), 7, cv::Scalar(0, 0, 255), -1);
 
+            // In zfloc-diagnostic mode the full path is suppressed so the only green dots on the
+            // plan are the keyframes that actually have a correction, drawn below next to it.
+            bool zfloc_diag_active = false;
+            {
+                std::lock_guard<std::mutex> lock(mtx_zfloc_anchors_);
+                zfloc_diag_active = show_zfloc_diag_ && !zfloc_anchors_.empty();
+            }
+            const bool draw_full_path = !(zfloc_diag_active && zfloc_diag_only_);
+
             // Draw keyframe path in chronological order (green dots + lines, BGR)
             std::vector<std::shared_ptr<stella_vslam::data::keyframe>> sorted_kfs = keyfrms;
             std::sort(sorted_kfs.begin(), sorted_kfs.end(),
                       [](const auto& a, const auto& b) { return a->id_ < b->id_; });
+            if (!draw_full_path) {
+                sorted_kfs.clear();
+            }
 
             cv::Point prev_pt;
             bool has_prev = false;
@@ -936,6 +959,54 @@ void viewer::run() {
                     const cv::Scalar color = active ? cv::Scalar(255, 204, 26)   // sky-blue (3D cyan)
                                                     : cv::Scalar(0, 128, 255);   // orange
                     cv::circle(disp, pt, 2, color, -1);
+                }
+            }
+
+            // zfloc correction diagnostic: green = where the map puts the keyframe, blue = where
+            // zfloc says it belongs, line = the correction. Both go through the SAME
+            // floorplan_T_F_Ws_ + to_pixel() path (the anchors are in the map's world frame), so
+            // any pattern in the lines is a real disagreement and not a projection artefact.
+            if (zfloc_diag_active) {
+                std::unordered_map<unsigned int, std::shared_ptr<stella_vslam::data::keyframe>> kf_by_id;
+                kf_by_id.reserve(keyfrms.size());
+                for (const auto& kf : keyfrms) {
+                    if (kf && !kf->will_be_erased()) {
+                        kf_by_id.emplace(kf->id_, kf);
+                    }
+                }
+
+                const auto to_disp = [&](double x_m, double y_m) {
+                    const Eigen::Vector4d pw_h(x_m, y_m, 0.0, 1.0);
+                    const Eigen::Vector4d pf_h = floorplan_T_F_Ws_ * pw_h;
+                    const auto fp_px = floorplan_->to_pixel(pf_h.x(), pf_h.y());
+                    return cv::Point(static_cast<int>(fp_px.x * fp_disp_scale_),
+                                     static_cast<int>(fp_px.y * fp_disp_scale_));
+                };
+                const auto in_view = [&](const cv::Point& p) {
+                    return p.x >= 0 && p.x < fp_disp_w_ && p.y >= 0 && p.y < fp_disp_h_;
+                };
+
+                std::lock_guard<std::mutex> lock(mtx_zfloc_anchors_);
+                for (const auto& a : zfloc_anchors_) {
+                    const auto it = kf_by_id.find(a.kf_id);
+                    const cv::Point anchor_pt = to_disp(a.x_m, a.y_m);
+
+                    if (it != kf_by_id.end()) {
+                        const stella_vslam::Mat44_t T_F_Ck = floorplan_T_F_Ws_ * it->second->get_pose_wc();
+                        const auto p25 = floorplan_->se3_to_pose2d5(T_F_Ck);
+                        const auto fp_px = floorplan_->to_pixel(p25.x_m, p25.y_m);
+                        const cv::Point kf_pt(static_cast<int>(fp_px.x * fp_disp_scale_),
+                                              static_cast<int>(fp_px.y * fp_disp_scale_));
+                        if (in_view(kf_pt)) {
+                            if (in_view(anchor_pt)) {
+                                cv::line(disp, kf_pt, anchor_pt, cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
+                            }
+                            cv::circle(disp, kf_pt, 3, cv::Scalar(0, 255, 0), -1);
+                        }
+                    }
+                    if (in_view(anchor_pt)) {
+                        cv::circle(disp, anchor_pt, 3, cv::Scalar(255, 0, 0), -1);
+                    }
                 }
             }
 
