@@ -108,6 +108,11 @@ public:
         zfloc_anchors_ = std::move(anchors);
     }
 
+    //! Drive the "Pause" checkbox from the application side. Setting it true renders the box
+    //! ticked, so a caller can halt its own pipeline and have the user resume it by simply
+    //! UNticking the box (which fires the registered checkbox callback with false).
+    void set_paused(bool paused) { is_paused_ = paused; }
+
     //! Call once the mapping module has applied the floorplan rigid alignment.
     //! Sets T_F_Ws = Identity so display and click handler work in floorplan = stella world frame.
     void set_floorplan_aligned() {
